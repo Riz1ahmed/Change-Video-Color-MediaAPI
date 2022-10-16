@@ -11,12 +11,11 @@ import android.net.Uri
 class ConversionService: IntentService("ConversionService") {
     override fun onHandleIntent(intent: Intent?) {
         val outPath = intent?.getStringExtra(KEY_OUT_PATH)
-        val inputVidUri = intent?.getParcelableExtra<Uri>(KEY_INPUT_VID_URI)
+        val inputVidUri = intent?.getParcelableExtra<Uri>(KEY_INPUT_VID_URI)!!
 
-        VideoToGrayscaleConverter().convert(outPath!!,
-            contentResolver.openFileDescriptor(inputVidUri, "r").fileDescriptor)
+        VideoToGrayscaleConverter().convert(this, inputVidUri,outPath!!)
 
-        val pi = intent?.getParcelableExtra<PendingIntent>(KEY_RESULT_INTENT)
+        val pi = intent.getParcelableExtra<PendingIntent>(KEY_RESULT_INTENT)
         pi.send()
     }
 
