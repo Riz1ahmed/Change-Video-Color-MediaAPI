@@ -7,7 +7,6 @@ import android.net.Uri
 import android.opengl.*
 import android.os.Handler
 import android.os.HandlerThread
-import android.util.Log
 import android.util.Size
 import android.view.Surface
 import java.security.InvalidParameterException
@@ -24,7 +23,8 @@ class VideoToGrayscaleConverter {
     private var decoder: MediaCodec? = null
     private var encoder: MediaCodec? = null
 
-    private val mediaCodedTimeoutUs = 10000L
+    /***/
+    private val mcTimeoutUs = 10000L
     private val bufferInfo = MediaCodec.BufferInfo()
     private var trackIndex = -1
 
@@ -48,17 +48,14 @@ class VideoToGrayscaleConverter {
     private var eglContext: EGLContext? = null
     private var eglSurface: EGLSurface? = null
 
-    // OpenGL transformation applied to UVs of the texture that holds
-    // the decoded frame
+    /**OpenGL transformation applied to UVs of the texture that holds the decoded frame*/
     private val texMatrix = FloatArray(16)
 
-    private var width = -1
-    private var height = -1
+    private var outVWidth = -1
+    private var outVHeight = -1
 
-    // Signalizes when a new decoded frame is available as texture
-    // for OpenGL rendering
+    // Signalizes when a new decoded frame is available as texture for OpenGL rendering
     @Volatile private var frameAvailable = false
-
     private var thread: HandlerThread? = null
 
     // OnFrameAvailable Callback is called from a different thread than
@@ -93,8 +90,8 @@ class VideoToGrayscaleConverter {
 
         // Prepare output format for the encoder
         val outFormat = getOutputFormat(inFormat, encoder!!)
-        width = outFormat.getInteger(MediaFormat.KEY_WIDTH)
-        height = outFormat.getInteger(MediaFormat.KEY_HEIGHT)
+        outVWidth = outFormat.getInteger(MediaFormat.KEY_WIDTH)
+        outVHeight = outFormat.getInteger(MediaFormat.KEY_HEIGHT)
 
         // Configure the encoder
         encoder!!.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -130,10 +127,8 @@ class VideoToGrayscaleConverter {
         surfaceTexture!!.setOnFrameAvailableListener({
             synchronized(lock) {
                 // New frame available before the last frame was process...we dropped some frames
-                if (frameAvailable) Log.d(
-                    MainActivity.TAG,
-                    "Frame available before the last frame was process...we dropped some frames"
-                )
+                if (frameAvailable)
+                    logD("Frame available before the last frame was process...we dropped some frames")
                 frameAvailable = true
                 lock.notifyAll()
             }
@@ -168,7 +163,7 @@ class VideoToGrayscaleConverter {
             inputFormat.getInteger(MediaFormat.KEY_HEIGHT)
         )
         val outRegu = Utils.getSupportedVideoSize(encoder, outMime, inputSize)
-        width = outRegu.width; height = outRegu.height
+        outVWidth = outRegu.width; outVHeight = outRegu.height
 
         return MediaFormat.createVideoFormat(outMime, outRegu.width, outRegu.height).apply {
             setInteger(
@@ -237,20 +232,28 @@ class VideoToGrayscaleConverter {
         allInputExtracted = false
         allInputDecoded = false
         allOutputEncoded = false
-
+        var testCounter = 0
         // Extract, decode, edit, encode, and mux
         while (!allOutputEncoded) {
-            // Feed input to decoder
+            // Get buffer data from extractor to decoder
             if (!allInputExtracted) feedInputToDecoder()
 
             var encoderOutputAvailable = true
             var decoderOutputAvailable = !allInputDecoded
 
             while (encoderOutputAvailable || decoderOutputAvailable) {
+                testCounter++
                 // Drain Encoder & mux to output file first
-                val outBufferId = encoder!!.dequeueOutputBuffer(bufferInfo, mediaCodedTimeoutUs)
-                if (outBufferId >= 0) {
+                val outBufferId = encoder!!.dequeueOutputBuffer(bufferInfo, mcTimeoutUs)
+                logD("outBufferId $testCounter: $outBufferId")
 
+                if (outBufferId == MediaCodec.INFO_TRY_AGAIN_LATER) {//-1
+                    encoderOutputAvailable = false
+                    getOutputFromDecoder2Encoder()
+                } else if (outBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {//-2
+                    trackIndex = muxer!!.addTrack(encoder!!.outputFormat)
+                    muxer!!.start()
+                } else if (outBufferId >= 0) {
                     val encodedBuffer = encoder!!.getOutputBuffer(outBufferId)!!
                     muxer!!.writeSampleData(trackIndex, encodedBuffer, bufferInfo)
                     encoder!!.releaseOutputBuffer(outBufferId, false)
@@ -260,60 +263,42 @@ class VideoToGrayscaleConverter {
                         allOutputEncoded = true
                         break
                     }
-                } else if (outBufferId == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    encoderOutputAvailable = false
-
-                    getOutputFromDecoder2Encoder()
-                } else if (outBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    trackIndex = muxer!!.addTrack(encoder!!.outputFormat)
-                    muxer!!.start()
                 }
 
                 if (outBufferId != MediaCodec.INFO_TRY_AGAIN_LATER) continue
 
                 // Get output from decoder and feed it to encoder
                 decoderOutputAvailable = getOutputFromDecoder2Encoder()
-
-                /*if (!allInputDecoded) {
-                    val outBufferId = decoder!!.dequeueOutputBuffer(bufferInfo, mediaCodedTimeoutUs)
-                    if (outBufferId >= 0) {
-                        val render = bufferInfo.size > 0
-                        // Give the decoded frame to SurfaceTexture (onFrameAvailable() callback should
-                        // be called soon after this)
-                        decoder!!.releaseOutputBuffer(outBufferId, render)
-                        if (render) {
-                            // Wait till new frame available after onFrameAvailable has been called
-                            waitTillFrameAvailable()
-
-                            surfaceTexture!!.updateTexImage()
-                            surfaceTexture!!.getTransformMatrix(texMatrix)
-
-                            // Draw texture with opengl
-                            textureRenderer!!.draw(width, height, texMatrix, getMvp())
-
-                            EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface,
-                                bufferInfo.presentationTimeUs * 1000)
-
-                            EGL14.eglSwapBuffers(eglDisplay, eglSurface)
-                        }
-
-                        // Did we get all output from decoder?
-                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            allInputDecoded = true
-                            encoder!!.signalEndOfInputStream()
-                        }
-                    } else if (outBufferId == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                        decoderOutputAvailable = false
-                    }
-                }*/
             }
         }
     }
 
+    /**Pass byteBuffer/data from extractor to decoder*/
+    private fun feedInputToDecoder() {
+        //get bufferId
+        val inBufferId = decoder!!.dequeueInputBuffer(mcTimeoutUs)
+        if (inBufferId >= 0) {
+            //get Buffer data by BufferId
+            val buffer = decoder!!.getInputBuffer(inBufferId)!!
+            val sampleSize = extractor!!.readSampleData(buffer, 0)
+
+            //if data available, pass to decoder
+            if (sampleSize >= 0) decoder!!.queueInputBuffer(
+                inBufferId, 0, sampleSize, extractor!!.sampleTime, extractor!!.sampleFlags
+            ).also { extractor!!.advance() }
+            //else clean & close decoder
+            else decoder!!.queueInputBuffer(
+                inBufferId, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM
+            ).also { allInputExtracted = true }
+        }
+    }
+
+    /**Pass byteBuffer/data from decoder to Encoder*/
     private fun getOutputFromDecoder2Encoder(): Boolean {
         // Get output from decoder and feed it to encoder
         if (!allInputDecoded) {
-            val outBufferId = decoder!!.dequeueOutputBuffer(bufferInfo, mediaCodedTimeoutUs)
+            //get current
+            val outBufferId = decoder!!.dequeueOutputBuffer(bufferInfo, mcTimeoutUs)
             if (outBufferId >= 0) {
                 val render = bufferInfo.size > 0
                 // Give the decoded frame to SurfaceTexture (onFrameAvailable() callback should
@@ -322,18 +307,7 @@ class VideoToGrayscaleConverter {
                 if (render) {
                     // Wait till new frame available after onFrameAvailable has been called
                     waitTillFrameAvailable()
-
-                    surfaceTexture!!.updateTexImage()
-                    surfaceTexture!!.getTransformMatrix(texMatrix)
-
-                    // Draw texture with opengl
-                    textureRenderer!!.draw(width, height, texMatrix, getMvp())
-
-                    EGLExt.eglPresentationTimeANDROID(
-                        eglDisplay, eglSurface, bufferInfo.presentationTimeUs * 1000
-                    )
-
-                    EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+                    drawingInSurface()
                 }
 
                 // Did we get all output from decoder?
@@ -341,39 +315,28 @@ class VideoToGrayscaleConverter {
                     allInputDecoded = true
                     encoder!!.signalEndOfInputStream()
                 }
-            } else if (outBufferId == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                return false
-            }
+            } else if (outBufferId == MediaCodec.INFO_TRY_AGAIN_LATER) return false
         }
         return true
     }
 
-    private fun feedInputToDecoder() {
-        val inBufferId = decoder!!.dequeueInputBuffer(mediaCodedTimeoutUs)
-        if (inBufferId >= 0) {
-            val buffer = decoder!!.getInputBuffer(inBufferId)
-            val sampleSize = extractor!!.readSampleData(buffer, 0)
-
-            if (sampleSize >= 0) {
-
-                decoder!!.queueInputBuffer(
-                    inBufferId, 0, sampleSize, extractor!!.sampleTime, extractor!!.sampleFlags
-                )
-
-                extractor!!.advance()
-            } else {
-                decoder!!.queueInputBuffer(inBufferId, 0, 0,
-                    0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                allInputExtracted = true
-            }
-        }
+    private fun drawingInSurface() {
+        surfaceTexture!!.updateTexImage()
+        surfaceTexture!!.getTransformMatrix(texMatrix)
+        // Draw texture with opengl
+        textureRenderer!!.draw(outVWidth, outVHeight, texMatrix, getMvp())
+        EGLExt.eglPresentationTimeANDROID(
+            eglDisplay, eglSurface, bufferInfo.presentationTimeUs * 1000
+        )
+        EGL14.eglSwapBuffers(eglDisplay, eglSurface)
     }
 
     private fun waitTillFrameAvailable() {
         synchronized(lock) {
             while (!frameAvailable) {
-                lock.wait(500)
-                if (!frameAvailable) Log.e(MainActivity.TAG, "Surface frame wait timed out")
+                logD("Waiting for frame...")
+                lock.wait(100)
+                if (!frameAvailable) logD("Surface frame wait timed out")
             }
             frameAvailable = false
         }
@@ -402,8 +365,8 @@ class VideoToGrayscaleConverter {
         thread?.quitSafely()
         thread = null
 
-        width = -1
-        height = -1
+        outVWidth = -1
+        outVHeight = -1
         trackIndex = -1
     }
 

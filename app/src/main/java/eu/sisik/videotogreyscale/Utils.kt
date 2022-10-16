@@ -9,7 +9,9 @@ import android.media.MediaCodec
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import android.util.Log
 import android.util.Size
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import kotlin.math.absoluteValue
 
@@ -124,4 +126,7 @@ object StControl{
             activity.requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), code)
     }
 }
+
+fun Context.showToast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+fun logD(msg: String) = Log.d("xyz", msg)
 

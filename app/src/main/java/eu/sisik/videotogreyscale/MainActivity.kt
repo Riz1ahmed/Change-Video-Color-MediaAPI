@@ -8,9 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import android.util.Log
 import android.view.View
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import kotlinx.android.synthetic.main.activity_main.*
@@ -25,9 +23,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        if (savedInstanceState != null)
-            inputFile = savedInstanceState.getParcelable("inputFile")
-
+        if (savedInstanceState != null) inputFile = savedInstanceState.getParcelable("inputFile")
         initView()
     }
 
@@ -72,7 +68,7 @@ class MainActivity : AppCompatActivity() {
 
             startActivityForResult(intent, CODE_THUMB)
 
-        } else Toast.makeText(this, getString(R.string.app_name), Toast.LENGTH_LONG).show()
+        } else showToast(getString(R.string.app_name))
     }
 
     private fun requestConvertVideo() {
@@ -90,9 +86,7 @@ class MainActivity : AppCompatActivity() {
             startService(intent)
 
             progressEncoding.visibility = View.VISIBLE
-        } else Toast.makeText(
-            this, getString(R.string.err_no_input_file), Toast.LENGTH_LONG
-        ).show()
+        } else showToast(getString(R.string.err_no_input_file))
     }
 
     private fun getOutputPath() = cacheDir.absolutePath + "/" + OUT_FILE_NAME
@@ -101,9 +95,8 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
         if (grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-            Log.v(TAG, "Permission: " + permissions[0] + "was " + grantResults[0])
-            Toast.makeText(this, getString(R.string.warn_no_storage_permission), Toast.LENGTH_LONG)
-                .show()
+            logD("Permission: " + permissions[0] + "was " + grantResults[0])
+            showToast(getString(R.string.warn_no_storage_permission))
         } else {
             if (requestCode == CODE_SELECT_VID) Utils.performVideoSearch(this, CODE_SELECT_VID)
         }
@@ -129,7 +122,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        const val TAG = "MainActivity"
         const val CODE_SELECT_VID = 6660
         const val CODE_THUMB = 6661
         const val CODE_PROCESSING_FINISHED = 6662
